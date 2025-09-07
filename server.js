@@ -4,6 +4,8 @@ const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
+const crypto = require('crypto');
+globalThis.crypto = crypto;
 
 const { 
     default: makeWASocket, 
