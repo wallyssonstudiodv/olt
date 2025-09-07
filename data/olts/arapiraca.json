@@ -1,0 +1,10 @@
+{
+  "OLT-EXEMPLO": {
+    "numeros": [123, 456, 789],
+    "perfil": "GPON-1G-RESIDENCIAL",
+    "status": "Ativo",
+    "capacidade": "1024 clientes",
+    "localizacao": "Centro",
+    "ip": "10.1.1.100"
+  }
+}
