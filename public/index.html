@@ -325,6 +325,71 @@
             display: none !important;
         }
 
+        .connection-controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .control-button {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 20px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .control-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .control-button.clear-session {
+            background: linear-gradient(45deg, #fd79a8, #e84393);
+            box-shadow: 0 5px 15px rgba(232, 67, 147, 0.3);
+        }
+
+        .control-button.clear-session:hover {
+            box-shadow: 0 8px 20px rgba(232, 67, 147, 0.4);
+        }
+
+        .control-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .qr-instructions {
+            text-align: center;
+            margin-top: 15px;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea10, #764ba210);
+            border-radius: 10px;
+            color: #7f8c8d;
+        }
+
+        .qr-instructions h3 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .qr-instructions ol {
+            text-align: left;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .qr-instructions li {
+            margin-bottom: 8px;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 15px;
@@ -367,8 +432,17 @@
             <div id="qrSection" class="qr-container">
                 <div class="loading">
                     <div class="spinner"></div>
-                    <p>Aguardando conexão...</p>
+                    <p>Inicializando conexão...</p>
                 </div>
+            </div>
+
+            <div id="connectionControls" class="connection-controls">
+                <button class="control-button reconnect" onclick="reconnectBot()">
+                    🔄 Reconectar
+                </button>
+                <button class="control-button clear-session" onclick="clearSession()">
+                    🗑️ Limpar Sessão
+                </button>
             </div>
 
             <div id="connectedSection" class="hidden">
@@ -430,14 +504,39 @@
 
         // Socket event listeners
         socket.on('qr', (qrData) => {
-            qrSection.innerHTML = `<img src="${qrData}" alt="QR Code" class="qr-code">`;
+            console.log('📱 QR Code recebido');
+            qrSection.innerHTML = `
+                <div>
+                    <img src="${qrData}" alt="QR Code" class="qr-code">
+                    <div class="qr-instructions">
+                        <h3>Como conectar:</h3>
+                        <ol>
+                            <li>Abra o WhatsApp no seu celular</li>
+                            <li>Toque em "Mais opções" > "Aparelhos conectados"</li>
+                            <li>Toque em "Conectar um aparelho"</li>
+                            <li>Aponte a câmera para este QR Code</li>
+                        </ol>
+                    </div>
+                </div>
+            `;
         });
 
         socket.on('connection', (data) => {
+            console.log('🔌 Status de conexão:', data.status);
             updateConnectionStatus(data.status === 'connected');
+            
+            if (data.status === 'connecting') {
+                qrSection.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Conectando ao WhatsApp...</p>
+                    </div>
+                `;
+            }
         });
 
         socket.on('groups', (groups) => {
+            console.log('📋 Grupos recebidos:', groups.length);
             availableGroups = groups;
             updateGroupsDisplay();
             document.getElementById('totalGroups').textContent = groups.length;
@@ -447,6 +546,11 @@
             selectedGroupIds = groupIds;
             updateGroupsDisplay();
             showAlert('Configuração salva com sucesso!', 'success');
+        });
+
+        socket.on('error', (error) => {
+            console.error('❌ Erro do socket:', error);
+            showAlert(`Erro: ${error.message}`, 'error');
         });
 
         // Functions
@@ -468,7 +572,7 @@
                 qrSection.innerHTML = `
                     <div class="loading">
                         <div class="spinner"></div>
-                        <p>Aguardando conexão...</p>
+                        <p>Inicializando conexão...</p>
                     </div>
                 `;
                 connectedSection.classList.add('hidden');
@@ -478,6 +582,63 @@
                     clearInterval(connectionTimer);
                 }
             }
+        }
+
+        function reconnectBot() {
+            const button = document.querySelector('.control-button.reconnect');
+            button.disabled = true;
+            button.textContent = '🔄 Reconectando...';
+            
+            fetch('/api/reconnect', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showAlert('Reconexão iniciada!', 'success');
+                    } else {
+                        showAlert('Erro ao reconectar', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Erro ao reconectar:', error);
+                    showAlert('Erro ao reconectar', 'error');
+                })
+                .finally(() => {
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.textContent = '🔄 Reconectar';
+                    }, 3000);
+                });
+        }
+
+        function clearSession() {
+            if (!confirm('Tem certeza que deseja limpar a sessão? Você precisará escanear o QR Code novamente.')) {
+                return;
+            }
+            
+            const button = document.querySelector('.control-button.clear-session');
+            button.disabled = true;
+            button.textContent = '🗑️ Limpando...';
+            
+            fetch('/api/clear-session', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showAlert('Sessão limpa! Aguarde a reconexão...', 'success');
+                        updateConnectionStatus(false);
+                    } else {
+                        showAlert('Erro ao limpar sessão', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Erro ao limpar sessão:', error);
+                    showAlert('Erro ao limpar sessão', 'error');
+                })
+                .finally(() => {
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.textContent = '🗑️ Limpar Sessão';
+                    }, 3000);
+                });
         }
 
         function startConnectionTimer() {
