@@ -1,3 +1,6 @@
+const pino = require('pino')
+const logger = pino({ level: 'silent' }
+const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys')
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const express = require('express');
 const { createServer } = require('http');
