@@ -36,61 +36,111 @@ app.use(express.static('public'));
 
 // Função para conectar ao WhatsApp
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-    
-    sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true,
-        version: [2, 3000, 1015901307],
-        logger: {
-            level: 'silent',
-            child: () => ({ level: 'silent' })
-        }
-    });
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            qrCodeData = await QRCode.toDataURL(qr);
-            io.emit('qr', qrCodeData);
-        }
-
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed due to ', lastDisconnect?.error, ', reconnecting ', shouldReconnect);
-            
-            isConnected = false;
-            io.emit('connection', { status: 'disconnected' });
-            
-            if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 5000);
+    try {
+        console.log('🔄 Iniciando conexão com WhatsApp...');
+        
+        const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+        
+        sock = makeWASocket({
+            auth: state,
+            printQRInTerminal: true,
+            browser: ['Bot WhatsApp', 'Chrome', '3.0'],
+            generateHighQualityLinkPreview: true,
+            markOnlineOnConnect: false,
+            logger: {
+                level: 'silent',
+                child: () => ({ level: 'silent' })
             }
-        } else if (connection === 'open') {
-            console.log('Opened connection');
-            isConnected = true;
-            qrCodeData = null;
-            io.emit('connection', { status: 'connected' });
+        });
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
             
-            // Buscar grupos disponíveis
-            await loadAvailableGroups();
-        }
-    });
+            console.log('📱 Update de conexão:', { connection, qr: !!qr });
 
-    sock.ev.on('creds.update', saveCreds);
+            if (qr) {
+                try {
+                    console.log('📱 Gerando QR Code...');
+                    qrCodeData = await QRCode.toDataURL(qr, {
+                        margin: 2,
+                        color: {
+                            dark: '#000000',
+                            light: '#FFFFFF'
+                        },
+                        width: 256
+                    });
+                    console.log('✅ QR Code gerado com sucesso');
+                    io.emit('qr', qrCodeData);
+                } catch (qrError) {
+                    console.error('❌ Erro ao gerar QR Code:', qrError);
+                    io.emit('error', { message: 'Erro ao gerar QR Code' });
+                }
+            }
 
-    // Handler para mensagens recebidas
-    sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg.key.fromMe && msg.message) {
-            await handleMessage(msg);
-        }
-    });
+            if (connection === 'close') {
+                const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+                console.log('🔌 Conexão fechada:', lastDisconnect?.error, ', reconectando:', shouldReconnect);
+                
+                isConnected = false;
+                qrCodeData = null;
+                io.emit('connection', { status: 'disconnected' });
+                
+                if (shouldReconnect) {
+                    console.log('🔄 Reconectando em 3 segundos...');
+                    setTimeout(() => {
+                        connectToWhatsApp();
+                    }, 3000);
+                }
+            } else if (connection === 'open') {
+                console.log('✅ WhatsApp conectado com sucesso!');
+                isConnected = true;
+                qrCodeData = null;
+                io.emit('connection', { status: 'connected' });
+                
+                // Buscar grupos disponíveis
+                setTimeout(async () => {
+                    await loadAvailableGroups();
+                }, 2000);
+            } else if (connection === 'connecting') {
+                console.log('🔄 Conectando...');
+                io.emit('connection', { status: 'connecting' });
+            }
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        // Handler para mensagens recebidas
+        sock.ev.on('messages.upsert', async (m) => {
+            try {
+                const msg = m.messages[0];
+                if (!msg.key.fromMe && msg.message) {
+                    await handleMessage(msg);
+                }
+            } catch (msgError) {
+                console.error('❌ Erro ao processar mensagem:', msgError);
+            }
+        });
+
+        // Handler para erros
+        sock.ev.on('error', (error) => {
+            console.error('❌ Erro no socket:', error);
+        });
+
+    } catch (error) {
+        console.error('❌ Erro ao conectar WhatsApp:', error);
+        io.emit('error', { message: 'Erro ao conectar com WhatsApp' });
+        
+        // Tentar reconectar após erro
+        setTimeout(() => {
+            connectToWhatsApp();
+        }, 5000);
+    }
 }
 
 // Função para buscar grupos disponíveis
 async function loadAvailableGroups() {
     try {
+        console.log('📋 Carregando grupos disponíveis...');
         const groups = await sock.groupFetchAllParticipating();
         const groupList = Object.values(groups).map(group => ({
             id: group.id,
@@ -98,9 +148,12 @@ async function loadAvailableGroups() {
             participants: group.participants.length
         }));
         
+        console.log(`✅ ${groupList.length} grupos encontrados`);
         io.emit('groups', groupList);
     } catch (error) {
-        console.error('Erro ao buscar grupos:', error);
+        console.error('❌ Erro ao buscar grupos:', error);
+        // Se falhar, tentar novamente em 5 segundos
+        setTimeout(loadAvailableGroups, 5000);
     }
 }
 
@@ -408,23 +461,81 @@ app.get('/api/status', (req, res) => {
     res.json({ 
         connected: isConnected,
         qr: qrCodeData,
-        selectedGroups: selectedGroups.length
+        selectedGroups: selectedGroups.length,
+        timestamp: new Date().toISOString()
     });
 });
 
 app.post('/api/groups/select', (req, res) => {
-    const { groupIds } = req.body;
-    selectedGroups = groupIds;
-    
-    // Salvar grupos selecionados em arquivo
-    fs.writeFileSync(GROUPS_FILE, JSON.stringify(selectedGroups, null, 2));
-    
-    io.emit('groupsSelected', selectedGroups);
-    res.json({ success: true });
+    try {
+        const { groupIds } = req.body;
+        selectedGroups = groupIds || [];
+        
+        // Salvar grupos selecionados em arquivo
+        fs.writeFileSync(GROUPS_FILE, JSON.stringify(selectedGroups, null, 2));
+        
+        console.log(`💾 ${selectedGroups.length} grupos selecionados salvos`);
+        io.emit('groupsSelected', selectedGroups);
+        res.json({ success: true, count: selectedGroups.length });
+    } catch (error) {
+        console.error('❌ Erro ao salvar grupos:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 app.get('/api/groups/selected', (req, res) => {
     res.json(selectedGroups);
+});
+
+// Endpoint para forçar reconexão
+app.post('/api/reconnect', (req, res) => {
+    console.log('🔄 Forçando reconexão...');
+    
+    if (sock) {
+        try {
+            sock.end();
+        } catch (error) {
+            console.log('Erro ao fechar conexão existente:', error);
+        }
+    }
+    
+    isConnected = false;
+    qrCodeData = null;
+    
+    setTimeout(() => {
+        connectToWhatsApp();
+    }, 1000);
+    
+    res.json({ success: true, message: 'Reconexão iniciada' });
+});
+
+// Endpoint para limpar sessão
+app.post('/api/clear-session', (req, res) => {
+    try {
+        console.log('🗑️ Limpando sessão...');
+        
+        if (sock) {
+            sock.end();
+        }
+        
+        // Remover pasta de autenticação
+        if (fs.existsSync('auth_info_baileys')) {
+            fs.rmSync('auth_info_baileys', { recursive: true, force: true });
+            console.log('✅ Sessão limpa com sucesso');
+        }
+        
+        isConnected = false;
+        qrCodeData = null;
+        
+        setTimeout(() => {
+            connectToWhatsApp();
+        }, 2000);
+        
+        res.json({ success: true, message: 'Sessão limpa, reconectando...' });
+    } catch (error) {
+        console.error('❌ Erro ao limpar sessão:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 // Socket.IO connections
