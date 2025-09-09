@@ -1,6 +1,3 @@
-const pino = require('pino')
-const logger = pino({ level: 'silent' }
-const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys')
 const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const express = require('express');
 const { createServer } = require('http');
@@ -9,6 +6,7 @@ const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const moment = require('moment');
+const P = require('pino');
 
 // Configurações
 const app = express();
@@ -44,16 +42,15 @@ async function connectToWhatsApp() {
         
         const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
         
+        const logger = P({ level: 'silent' });
+        
         sock = makeWASocket({
             auth: state,
             printQRInTerminal: true,
             browser: ['Bot WhatsApp', 'Chrome', '3.0'],
             generateHighQualityLinkPreview: true,
             markOnlineOnConnect: false,
-            logger: {
-                level: 'silent',
-                child: () => ({ level: 'silent' })
-            }
+            logger: logger
         });
 
         sock.ev.on('connection.update', async (update) => {
